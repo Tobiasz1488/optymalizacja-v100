@@ -87,7 +87,11 @@ CTX=65536 KV=q8_0 HOST=0.0.0.0 ./scripts/run-server.sh models/model.gguf --paral
    VS 2022 jest oficjalnie wspierane przez CUDA 12.x; z nowszym VS skrypt doda
    `-allow-unsupported-compiler`.
 2. Zainstaluj sterownik NVIDIA dla Tesla V100 z gałęzi **R580** (Data Center / Tesla driver).
-3. Zainstaluj **CUDA Toolkit 12.9** (po Visual Studio).
+3. Zainstaluj **CUDA Toolkit 12.9** (po Visual Studio):
+   <https://developer.nvidia.com/cuda-12-9-1-download-archive> → Windows → x86_64 → 11 → exe (local).
+   Jeśli sterownik R580 jest już zainstalowany, wybierz instalację **niestandardową (Custom)**
+   i odznacz *Driver components* — instalator CUDA 12.9 ma starszy sterownik.
+   Po instalacji otwórz **nowe** okno PowerShell.
 4. Jednorazowo zezwól na uruchamianie lokalnych skryptów PowerShell (Windows 11 domyślnie
    je blokuje). Jeśli repo pobrano jako ZIP, odblokuj też pliki:
 

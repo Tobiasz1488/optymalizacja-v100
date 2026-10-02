@@ -51,12 +51,44 @@ foreach ($tool in "cmake", "ninja") {
 }
 
 # --- CUDA 12.x ---------------------------------------------------------------
-if (-not $CudaPath) {
-    $cudaVars = Get-ChildItem env: | Where-Object { $_.Name -match '^CUDA_PATH_V12_(\d+)$' } |
-        Sort-Object { [int]($_.Name -replace '^CUDA_PATH_V12_', '') } -Descending
-    if ($cudaVars) { $CudaPath = $cudaVars[0].Value } elseif ($env:CUDA_PATH) { $CudaPath = $env:CUDA_PATH }
+# Newest CUDA 12.x with nvcc.exe. Besides this process' environment also look at
+# the registry (a terminal opened before installing CUDA does not see the new
+# variables) and at the default install directory.
+function Find-Cuda12 {
+    $candidates = @()
+    foreach ($scope in "Process", "Machine", "User") {
+        $vars = [Environment]::GetEnvironmentVariables($scope)
+        foreach ($name in $vars.Keys) {
+            if ($name -match '^CUDA_PATH_V12_(\d+)$') {
+                $candidates += [pscustomobject]@{ Minor = [int]$Matches[1]; Path = [string]$vars[$name] }
+            }
+        }
+    }
+    $root = Join-Path $env:ProgramFiles "NVIDIA GPU Computing Toolkit\CUDA"
+    if (Test-Path $root) {
+        foreach ($dir in Get-ChildItem $root -Directory) {
+            if ($dir.Name -match '^v12\.(\d+)$') {
+                $candidates += [pscustomobject]@{ Minor = [int]$Matches[1]; Path = $dir.FullName }
+            }
+        }
+    }
+    $found = $candidates | Where-Object { $_.Path -and (Test-Path (Join-Path $_.Path "bin\nvcc.exe")) } |
+        Sort-Object Minor -Descending | Select-Object -First 1
+    if ($found) { return $found.Path }
+    return $null
 }
-if (-not $CudaPath) { throw "CUDA Toolkit 12.x not found. Install CUDA 12.9 or pass -CudaPath." }
+
+if (-not $CudaPath) { $CudaPath = Find-Cuda12 }
+if (-not $CudaPath) {
+    # Possibly only CUDA 13 is installed - let the version check below report that.
+    $CudaPath = $env:CUDA_PATH
+    if (-not $CudaPath) { $CudaPath = [Environment]::GetEnvironmentVariable("CUDA_PATH", "Machine") }
+}
+if (-not $CudaPath) {
+    throw ("CUDA Toolkit 12.x not found (checked CUDA_PATH_V12_* variables and " +
+        "$env:ProgramFiles\NVIDIA GPU Computing Toolkit\CUDA\v12.*). " +
+        "Install CUDA 12.9: https://developer.nvidia.com/cuda-12-9-1-download-archive or pass -CudaPath.")
+}
 $nvcc = Join-Path $CudaPath "bin\nvcc.exe"
 if (-not (Test-Path $nvcc)) { throw "nvcc.exe not found in $CudaPath\bin. Install CUDA 12.9 or pass -CudaPath." }
 
