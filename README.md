@@ -11,7 +11,7 @@ scripts/
   setup-ubuntu.sh     instalacja narzędzi, CUDA 12.9 (+ opcjonalnie sterownika 580)
   build-ubuntu.sh     budowanie na Ubuntu
   build-windows.ps1   budowanie na Windows 11 (build-windows.bat = to samo z dwukliku)
-  run-server.sh/.ps1  llama-server z ustawieniami pod V100 32GB
+  run-server.sh/.ps1  llama-server z ustawieniami pod V100 32GB (+ dekodowanie spekulatywne)
   bench.sh/.ps1       benchmark (llama-bench): KV f16 vs q8_0, krótki i długi kontekst
   tune-gpu.sh/.ps1    maks. zegary aplikacyjne, limit mocy, persistence mode
   update-llama.sh     podmiana kopii llama.cpp na nowszy tag upstream
@@ -138,6 +138,21 @@ CTX=65536 KV=q8_0 HOST=0.0.0.0 ./scripts/run-server.sh models/model.gguf --paral
 
 Uwaga: V100 pod Windows domyślnie działa w trybie **TCC** (karta obliczeniowa, bez wyjścia
 obrazu) — to dobry tryb dla llama.cpp. Sprawdzisz go w `nvidia-smi` (kolumna *TCC/WDDM*).
+
+## Dekodowanie spekulatywne (szybsze generowanie)
+
+Mały „zgadywacz” proponuje kilka kolejnych tokenów, a duży model sprawdza je w jednym przebiegu.
+Wynik jest identyczny jak bez tego, tylko szybszy (zwykle 1,3–2× przy generowaniu). To właśnie
+pokazuje LM Studio jako „draft tokens accepted”.
+
+| Tryb | Linux | Windows | Kiedy |
+|---|---|---|---|
+| głowice MTP w modelu | `SPEC=mtp ./scripts/run-server.sh m.gguf` | `-Spec mtp` | modele z MTP (Qwen 3.5+, GLM, DeepSeek); plik GGUF musi zawierać warstwy MTP — inaczej serwer kończy się błędem *model doesn't contain MTP layers* |
+| osobny model draft | `DRAFT=models/maly.gguf ./scripts/run-server.sh m.gguf` | `-DraftModel models\maly.gguf` | mały model z tej samej rodziny (ten sam tokenizer), np. 0,5–2B |
+| n-gramy | `SPEC=ngram ./scripts/run-server.sh m.gguf` | `-Spec ngram` | powtarzalny tekst, edycja kodu |
+
+Draft model zajmuje dodatkowe VRAM (np. ~1–2 GB dla 1–2B w Q8_0). Skuteczność sprawdzisz
+w odpowiedzi API (`timings.draft_n` / `draft_n_accepted`) lub w logu serwera.
 
 ## Co zmieści się w 32 GB
 
