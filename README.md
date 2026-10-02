@@ -22,7 +22,7 @@ models/               tu wrzucasz pliki .gguf (ignorowane przez git)
 
 | Ustawienie | Wartość | Dlaczego |
 |---|---|---|
-| `CMAKE_CUDA_ARCHITECTURES` | `70-real` | Kod maszynowy tylko dla V100: brak kompilacji JIT PTX przy starcie, mniejsze binarki, kilkukrotnie krótszy build. ggml wybiera ścieżki kodu specyficzne dla Volty (MMQ, MMVQ, FlashAttention na tensor core'ach WMMA). |
+| `CMAKE_CUDA_ARCHITECTURES` | `70-real` | Kod maszynowy tylko dla V100: brak kompilacji JIT PTX przy starcie, mniejsze binarki, kilkukrotnie krótszy build. ggml wybiera ścieżki kodu specyficzne dla Volty (MMQ, MMVQ, FlashAttention na tensor core'ach). |
 | `GGML_CUDA_FA` + `GGML_CUDA_FA_QUANTS` | `f16, q8_0, q4_0, q5_0, q8_0/q4_0, q8_0/f16` | FlashAttention z kwantyzowanym KV cache. Pominięte `bf16` — V100 nie ma sprzętowego BF16. |
 | `GGML_CUDA_GRAPHS` | `ON` | CUDA graphs zmniejszają narzut uruchamiania kerneli przy generowaniu tokenów. |
 | `GGML_CUDA_COMPRESSION_MODE` | `none` | Jedna architektura — kompresja fatbina nic nie daje, a spowalnia start. |
@@ -32,9 +32,10 @@ models/               tu wrzucasz pliki .gguf (ignorowane przez git)
 
 ### KV cache na V100: f16 zamiast q8_0
 
-Z analizy `ggml/src/ggml-cuda/fattn.cu`: na Volcie przy generowaniu tokenów dla modeli z GQA
-(prawie wszystkie współczesne: Llama 3, Qwen, Gemma, Mistral) wybierany jest kernel `TILE`,
-który działa wyłącznie na danych f16. Kwantyzowany KV cache (q8_0/q4_0) jest więc przy
+Z analizy `ggml/src/ggml-cuda/fattn.cu`: na Volcie przy generowaniu tokenów dla modeli z GQA ≥ 4
+(Llama 3, Qwen 2.5/3, Mistral i większość współczesnych) wybierany jest kernel `TILE`,
+który działa wyłącznie na danych f16. (Przy GQA ≤ 2, np. Gemma 3 27B, używany jest kernel `VEC`,
+który czyta q8_0 bezpośrednio — tam q8_0 nie jest wolniejsze.) Kwantyzowany KV cache (q8_0/q4_0) jest więc przy
 **każdym tokenie i każdej warstwie w całości konwertowany do f16** (`fattn-common.cuh`), co
 przy długim kontekście kosztuje ok. 2–2,5× więcej transferu pamięci w attention niż f16.
 Na Turingu/Ampere tego problemu nie ma, dlatego popularna rada „zawsze q8_0” nie pasuje do V100.
@@ -80,12 +81,22 @@ CTX=65536 KV=q8_0 HOST=0.0.0.0 ./scripts/run-server.sh models/model.gguf --paral
 ## Windows 11
 
 1. Zainstaluj **Visual Studio 2022** (lub *Build Tools for Visual Studio 2022*) z obciążeniem
-   **„Programowanie aplikacji klasycznych w języku C++”** — zawiera CMake i Ninja.
+   **„Programowanie aplikacji klasycznych w języku C++”** i komponentem
+   **„Narzędzia CMake języka C++ dla systemu Windows”** (*C++ CMake tools for Windows* — daje CMake
+   i Ninja). Do budowania z HTTPS potrzebny jest też **Git** (`winget install Git.Git`).
    VS 2022 jest oficjalnie wspierane przez CUDA 12.x; z nowszym VS skrypt doda
    `-allow-unsupported-compiler`.
 2. Zainstaluj sterownik NVIDIA dla Tesla V100 z gałęzi **R580** (Data Center / Tesla driver).
 3. Zainstaluj **CUDA Toolkit 12.9** (po Visual Studio).
-4. Zbuduj (PowerShell w katalogu repo albo dwuklik na `scripts\build-windows.bat`):
+4. Jednorazowo zezwól na uruchamianie lokalnych skryptów PowerShell (Windows 11 domyślnie
+   je blokuje). Jeśli repo pobrano jako ZIP, odblokuj też pliki:
+
+   ```powershell
+   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+   Get-ChildItem -Recurse scripts | Unblock-File   # tylko dla repo pobranego jako ZIP
+   ```
+
+   Zbuduj (PowerShell w katalogu repo albo dwuklik na `scripts\build-windows.bat`):
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
@@ -93,7 +104,7 @@ CTX=65536 KV=q8_0 HOST=0.0.0.0 ./scripts/run-server.sh models/model.gguf --paral
 
    Binarki trafią do `build\bin`, razem z potrzebnymi DLL-ami CUDA (cudart, cuBLAS).
    Domyślnie budowany jest dołączony BoringSSL (pobierany podczas budowania), żeby działało
-   pobieranie modeli przez `-hf`; flaga `-NoHttps` to wyłącza.
+   pobieranie modeli przez `-hf`; flaga `-NoHttps` to wyłącza (bez Gita wyłącza się sama).
 5. Uruchom:
 
    ```powershell
@@ -118,7 +129,7 @@ mniej więcej o połowę mniejszy:
 |---|---|---|---|
 | 7–14B | Q8_0 | 8–16 GB | 64k–128k |
 | 27–32B (Qwen3-32B, Gemma 3 27B) | Q4_K_M / Q5_K_M | 17–23 GB | 32k–64k |
-| 30B MoE (Qwen3-30B-A3B) | Q6_K / Q8_0 | 25–32 GB | 16k–32k |
+| 30B MoE (Qwen3-30B-A3B) | Q5_K_M / Q6_K | 22–25 GB | 16k–32k (Q8_0 ≈ 32,5 GB — nie mieści się) |
 | 70B | Q2_K / IQ3_XXS | 26–28 GB | 4k–8k (lub `-ngl` < 999 i część na CPU) |
 | duże MoE (gpt-oss-120b itp.) | MXFP4 / Q4 | > 32 GB | `--n-cpu-moe N` — eksperci na CPU, reszta na GPU |
 
@@ -134,13 +145,27 @@ Wskazówki dla Volty:
   `bench.sh` / `bench.ps1`.
 * Kilka V100 (np. NVLink w serwerach SXM2): model jest dzielony automatycznie;
   na Ubuntu `setup-ubuntu.sh` instaluje NCCL, który to przyspiesza.
+* Opcjonalnie dla modeli MoE: `./scripts/build-ubuntu.sh -DGGML_CUDA_CCCL_VERSION=v3.4.3`
+  (Windows: `-CMakeArgs "-DGGML_CUDA_CCCL_VERSION=v3.4.3"`) pobiera nowszą bibliotekę CCCL
+  z szybszym top-k na GPU — tak budowane są oficjalne wydania llama.cpp dla CUDA 12.
+
+## Uwagi do budowania
+
+* Ustawienia z `cmake/v100.cmake` trafiają do cache CMake tylko przy **pierwszej** konfiguracji
+  katalogu `build/`. Po zmianie tego pliku (lub opcji `-D...`) usuń `build/` i zbuduj od nowa.
+* Na Ubuntu można budować przed instalacją sterownika (skrypt linkuje wtedy do zaślepki
+  `libcuda` i wypisuje ostrzeżenie) — do uruchomienia sterownik 580 jest oczywiście potrzebny.
+* Przy kilku zainstalowanych wersjach CUDA wskaż właściwą: `CUDA_HOME=/usr/local/cuda-12.9`
+  (Linux) lub `-CudaPath "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9"` (Windows).
+* Kompilacja kerneli CUDA jest pamięciożerna — przy małej ilości RAM ogranicz liczbę wątków,
+  np. `cmake --build build -j 4`.
 
 ## Aktualizacja llama.cpp
 
 ```bash
 ./scripts/update-llama.sh b11400   # dowolny tag z https://github.com/ggml-org/llama.cpp/tags
-./scripts/build-ubuntu.sh
-git add -A && git commit -m "Update llama.cpp to b11400"
+rm -rf build && ./scripts/build-ubuntu.sh
+git add -A -f llama.cpp && git add LLAMA_CPP_VERSION && git commit -m "Update llama.cpp to b11400"
 ```
 
 Konfiguracja V100 jest w `cmake/v100.cmake`, a nie w źródłach llama.cpp, więc aktualizacja

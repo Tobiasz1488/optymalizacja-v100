@@ -4,6 +4,7 @@
 param([Parameter(Mandatory = $true)] [string] $Model, [string[]] $Extra = @())
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $b = Join-Path $Root "build\bin\llama-bench.exe"
+if (-not (Test-Path $b)) { throw "$b not found - run scripts\build-windows.ps1 first." }
 foreach ($kv in "f16", "q8_0") {
     & $b -m $Model -ngl 999 -fa 1 -ctk $kv -ctv $kv -p 512 -n 128 -d 0,16384 -ub 512,1024 -lm none @Extra
 }

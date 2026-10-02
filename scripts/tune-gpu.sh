@@ -11,7 +11,7 @@ set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then exec sudo "$0" "$@"; fi
 
-nvidia-smi -pm 1 >/dev/null
+[[ "${1:-}" == "--reset" ]] || nvidia-smi -pm 1 >/dev/null
 
 for i in $(nvidia-smi --query-gpu=index --format=csv,noheader); do
     name=$(nvidia-smi -i "$i" --query-gpu=name --format=csv,noheader)
@@ -27,10 +27,16 @@ for i in $(nvidia-smi --query-gpu=index --format=csv,noheader); do
     clocks=$(nvidia-smi -i "$i" --query-supported-clocks=mem,gr --format=csv,noheader,nounits)
     mem=$(awk -F', ' '{print $1}' <<<"$clocks" | sort -n | tail -1)
     gr=$(awk -F', ' -v m="$mem" '$1 == m {print $2}' <<<"$clocks" | sort -n | tail -1)
-    nvidia-smi -i "$i" -ac "$mem,$gr" >/dev/null
+    if nvidia-smi -i "$i" -ac "$mem,$gr" >/dev/null; then
+        echo "GPU $i: $name - application clocks ${mem}/${gr} MHz"
+    else
+        echo "GPU $i: setting application clocks failed" >&2
+    fi
 
     pl=$(nvidia-smi -i "$i" --query-gpu=power.max_limit --format=csv,noheader,nounits)
-    nvidia-smi -i "$i" -pl "$pl" >/dev/null
-
-    echo "GPU $i: $name - application clocks ${mem}/${gr} MHz, power limit ${pl} W"
+    if nvidia-smi -i "$i" -pl "$pl" >/dev/null; then
+        echo "GPU $i: $name - power limit ${pl} W"
+    else
+        echo "GPU $i: setting power limit failed" >&2
+    fi
 done

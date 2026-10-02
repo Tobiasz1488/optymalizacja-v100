@@ -18,4 +18,7 @@ tag=$TAG
 commit=$COMMIT
 source=https://github.com/ggml-org/llama.cpp
 VER
-echo "llama.cpp updated to $TAG ($COMMIT). Rebuild and commit the changes."
+echo "llama.cpp updated to $TAG ($COMMIT)."
+echo "Next: rm -rf build && ./scripts/build-ubuntu.sh"
+echo "      git add -A -f llama.cpp && git add LLAMA_CPP_VERSION && git commit -m \"Update llama.cpp to $TAG\""
+echo "(-f: upstream tracks a few files that its own .gitignore would otherwise skip)"

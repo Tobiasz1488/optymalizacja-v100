@@ -38,3 +38,18 @@ set(LLAMA_BUILD_TESTS    OFF CACHE BOOL "")
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "")
 set(LLAMA_BUILD_TOOLS    ON  CACHE BOOL "")
 set(LLAMA_BUILD_SERVER   ON  CACHE BOOL "")
+
+# --- Version info -------------------------------------------------------------
+# The bundled copy has no .git of its own, so llama.cpp would take the commit
+# count of THIS repository as its build number (e.g. "b2"). That is wrong in
+# --version and makes llama-server download the web UI of a different release.
+# Take the real upstream tag/commit from LLAMA_CPP_VERSION instead.
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../LLAMA_CPP_VERSION" _v100_version_lines)
+foreach(_line IN LISTS _v100_version_lines)
+    if (_line MATCHES "^tag=b([0-9]+)$")
+        set(LLAMA_BUILD_NUMBER "${CMAKE_MATCH_1}" CACHE STRING "" FORCE)
+    elseif (_line MATCHES "^commit=([0-9a-f]+)$")
+        string(SUBSTRING "${CMAKE_MATCH_1}" 0 8 _v100_commit)
+        set(LLAMA_BUILD_COMMIT "${_v100_commit}" CACHE STRING "" FORCE)
+    endif()
+endforeach()

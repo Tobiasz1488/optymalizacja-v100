@@ -30,14 +30,26 @@ if [[ "$CUDA_MAJOR" -ge 13 ]]; then
     echo "Install CUDA 12.x (./scripts/setup-ubuntu.sh) and set CUDA_HOME=/usr/local/cuda-12.9" >&2
     exit 1
 fi
-echo "Using $NVCC (CUDA $CUDA_MAJOR)"
+# Toolkit root of the selected nvcc. Passed to CMake explicitly, otherwise
+# FindCUDAToolkit may pick /usr/local/cuda, which can point to another version.
+CUDA_ROOT=$(dirname "$(dirname "$(readlink -f "$NVCC")")")
+echo "Using $NVCC (CUDA $CUDA_MAJOR, toolkit $CUDA_ROOT)"
 
-GENERATOR=()
-command -v ninja >/dev/null && GENERATOR=(-G Ninja)
+EXTRA=()
+command -v ninja >/dev/null && EXTRA+=(-G Ninja)
 
-cmake -S "$ROOT/llama.cpp" -B "$BUILD_DIR" "${GENERATOR[@]}" \
+# Without the NVIDIA driver there is no libcuda.so.1 and linking the executables
+# fails (undefined reference to cuGetErrorString). The binaries still need the
+# driver at runtime; this only allows building before it is installed.
+if ! grep -q 'libcuda\.so\.1' <<<"$(ldconfig -p 2>/dev/null)"; then
+    echo "Warning: NVIDIA driver (libcuda.so.1) not found - linking against the CUDA stub." >&2
+    EXTRA+=(-DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined)
+fi
+
+cmake -S "$ROOT/llama.cpp" -B "$BUILD_DIR" "${EXTRA[@]}" \
     -C "$ROOT/cmake/v100.cmake" \
     -DCMAKE_CUDA_COMPILER="$NVCC" \
+    -DCUDAToolkit_ROOT="$CUDA_ROOT" \
     "$@"
 
 cmake --build "$BUILD_DIR" --config Release -j "$(nproc)"

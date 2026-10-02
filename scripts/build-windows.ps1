@@ -44,14 +44,21 @@ Write-Host "Visual Studio: $vsPath"
 Import-Module (Join-Path $vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
 Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64" | Out-Null
 
+foreach ($tool in "cmake", "ninja") {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+        throw "$tool not found. Add the 'C++ CMake tools for Windows' component in the Visual Studio Installer."
+    }
+}
+
 # --- CUDA 12.x ---------------------------------------------------------------
 if (-not $CudaPath) {
     $cudaVars = Get-ChildItem env: | Where-Object { $_.Name -match '^CUDA_PATH_V12_(\d+)$' } |
         Sort-Object { [int]($_.Name -replace '^CUDA_PATH_V12_', '') } -Descending
     if ($cudaVars) { $CudaPath = $cudaVars[0].Value } elseif ($env:CUDA_PATH) { $CudaPath = $env:CUDA_PATH }
 }
+if (-not $CudaPath) { throw "CUDA Toolkit 12.x not found. Install CUDA 12.9 or pass -CudaPath." }
 $nvcc = Join-Path $CudaPath "bin\nvcc.exe"
-if (-not $CudaPath -or -not (Test-Path $nvcc)) { throw "CUDA Toolkit 12.x not found. Install CUDA 12.9 or pass -CudaPath." }
+if (-not (Test-Path $nvcc)) { throw "nvcc.exe not found in $CudaPath\bin. Install CUDA 12.9 or pass -CudaPath." }
 
 $nvccVersion = (& $nvcc --version) -join "`n"
 if ($nvccVersion -match 'release (\d+)\.(\d+)') {
@@ -71,8 +78,14 @@ $args_ = @(
     "-C", (Join-Path $Root "cmake\v100.cmake"),
     "-DCMAKE_C_COMPILER=cl",
     "-DCMAKE_CXX_COMPILER=cl",
-    "-DCMAKE_CUDA_COMPILER=$($nvcc -replace '\\','/')"
+    "-DCMAKE_CUDA_COMPILER=$($nvcc -replace '\\','/')",
+    "-DCUDAToolkit_ROOT=$($CudaPath -replace '\\','/')"
 )
+# BoringSSL is fetched with git during configure; without git the configure step would fail.
+if (-not $NoHttps -and -not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Warning "git not found - building without HTTPS support (no -hf model downloads)."
+    $NoHttps = $true
+}
 if (-not $NoHttps)       { $args_ += "-DLLAMA_BUILD_BORINGSSL=ON" }
 if ($unsupportedHost)    {
     Write-Warning "Visual Studio 2022 not found, using a newer MSVC with -allow-unsupported-compiler."

@@ -15,6 +15,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${BIN:-$ROOT/build/bin}"
 MODEL="${1:?usage: $0 <model.gguf> [extra args]}"; shift
+[[ -x "$BIN/llama-server" ]] || { echo "$BIN/llama-server not found - run ./scripts/build-ubuntu.sh first" >&2; exit 1; }
 
 exec "$BIN/llama-server" \
     -m "$MODEL" \

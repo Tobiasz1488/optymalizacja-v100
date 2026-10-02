@@ -41,7 +41,7 @@ $SUDO apt-get install -y "cuda-toolkit-${CUDA_VER}"
 
 # NCCL speeds up splitting a model across several V100s (no effect with one GPU).
 # Pick the NCCL build made for CUDA 12.x - the newest packages target CUDA 13.
-NCCL_VER=$(apt-cache madison libnccl-dev | awk -v c="+cuda${CUDA_VER/-/.}" 'index($3, c) {print $3; exit}')
+NCCL_VER=$(apt-cache madison libnccl-dev | awk -v c="+cuda${CUDA_VER/-/.}" 'index($3, c) && v == "" {v = $3} END {print v}')
 if [[ -n "$NCCL_VER" ]]; then
     $SUDO apt-get install -y "libnccl2=$NCCL_VER" "libnccl-dev=$NCCL_VER"
     $SUDO apt-mark hold libnccl2 libnccl-dev
@@ -51,7 +51,11 @@ fi
 
 if [[ $WITH_DRIVER -eq 1 ]]; then
     echo "==> NVIDIA driver 580 (server branch, last branch supporting Volta)"
-    $SUDO apt-get install -y nvidia-driver-580-server nvidia-utils-580-server
+    # ubuntu-drivers installs Canonical's signed, prebuilt kernel modules, so the
+    # driver also loads with Secure Boot enabled (no DKMS / MOK enrollment).
+    $SUDO apt-get install -y ubuntu-drivers-common
+    $SUDO ubuntu-drivers install --gpgpu nvidia:580-server
+    $SUDO apt-get install -y nvidia-utils-580-server
     echo "Reboot required after driver installation."
 fi
 
