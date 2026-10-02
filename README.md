@@ -37,14 +37,29 @@ Z analizy `ggml/src/ggml-cuda/fattn.cu`: na Volcie przy generowaniu tokenów dla
 który działa wyłącznie na danych f16. (Przy GQA ≤ 2, np. Gemma 3 27B, używany jest kernel `VEC`,
 który czyta q8_0 bezpośrednio — tam q8_0 nie jest wolniejsze.) Kwantyzowany KV cache (q8_0/q4_0) jest więc przy
 **każdym tokenie i każdej warstwie w całości konwertowany do f16** (`fattn-common.cuh`), co
-przy długim kontekście kosztuje ok. 2–2,5× więcej transferu pamięci w attention niż f16.
+zwiększa transfer pamięci w samej attention (w pomiarze niżej przełożyło się to na 2–3% całości).
 Na Turingu/Ampere tego problemu nie ma, dlatego popularna rada „zawsze q8_0” nie pasuje do V100.
 
 * **f16** — domyślnie, najszybciej.
 * **q8_0 / q4_0** — tylko gdy model + kontekst nie mieszczą się w 32 GB.
 
-Sprawdź na swoim modelu: `./scripts/bench.sh model.gguf` porównuje f16 i q8_0 przy pustym
-kontekście i przy 16k tokenów (`-d 16384`) — różnica rośnie z długością kontekstu.
+Pomiar na Tesla V100-PCIE-32GB (Windows 11, CUDA 12.x, build b11347, Qwen3.8-27B UD-Q4_K_XL,
+16,3 GiB, `-ub 512`):
+
+| test | KV f16 | KV q8_0 | różnica |
+|---|---:|---:|---:|
+| pp512 (prompt) | 843 t/s | 820 t/s | f16 +3% |
+| tg128 (generowanie) | 33,4 t/s | 32,7 t/s | f16 +2% |
+| pp512 @ 16k kontekstu | 644 t/s | 628 t/s | f16 +2% |
+| tg128 @ 16k kontekstu | 30,5 t/s | 29,7 t/s | f16 +2,5% |
+
+f16 jest szybsze, ale tylko o 2–3% — ten model jest hybrydowy (tylko część warstw ma pełną
+attention z KV cache), więc koszt konwersji jest mały. Przy modelach z pełną attention we
+wszystkich warstwach i dłuższym kontekście różnica może być większa. Wniosek praktyczny:
+f16, gdy mieści się w pamięci; q8_0 bez wahania, gdy potrzebujesz dłuższego kontekstu.
+`-ub 1024` był w tym pomiarze o 1–2% wolniejszy od 512, więc domyślnie zostaje 512.
+
+Sprawdź na swoim modelu: `./scripts/bench.sh model.gguf` (Windows: `.\scripts\bench.ps1`).
 
 ### Wymagania wersji — ważne dla V100
 
@@ -145,7 +160,7 @@ Wskazówki dla Volty:
   dopiero na końcu mniejsza kwantyzacja modelu.
 * Do przetestowania: `GGML_CUDA_GRAPH_OPT=1` (eksperymentalne w llama.cpp — równoległe
   wykonywanie niezależnych gałęzi grafu na kilku strumieniach CUDA). Porównaj `bench.sh` z i bez.
-* `-ub 1024` może przyspieszyć przetwarzanie długich promptów kosztem ~1–2 GB VRAM — sprawdź
+* `-ub 1024` w pomiarze na V100 nie pomógł (1–2% wolniej niż 512) — sprawdź na swoim modelu
   `bench.sh` / `bench.ps1`.
 * Kilka V100 (np. NVLink w serwerach SXM2): model jest dzielony automatycznie;
   na Ubuntu `setup-ubuntu.sh` instaluje NCCL, który to przyspiesza.
