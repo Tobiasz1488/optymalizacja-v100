@@ -1,5 +1,9 @@
-# Quick V100 benchmark: prompt processing and generation, FlashAttention off/on.
+# V100 benchmark: prompt processing (pp) and generation (tg) at empty and long
+# context, f16 vs q8_0 KV cache, all with FlashAttention.
 #   .\scripts\bench.ps1 models\model.gguf
-param([Parameter(Mandatory = $true)] [string] $Model)
+param([Parameter(Mandatory = $true)] [string] $Model, [string[]] $Extra = @())
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-& (Join-Path $Root "build\bin\llama-bench.exe") -m $Model -ngl 999 -fa 0,1 -p 512,4096 -n 128 -ub 512
+$b = Join-Path $Root "build\bin\llama-bench.exe"
+foreach ($kv in "f16", "q8_0") {
+    & $b -m $Model -ngl 999 -fa 1 -ctk $kv -ctv $kv -p 512 -n 128 -d 0,16384 -ub 512,1024 -lm none @Extra
+}

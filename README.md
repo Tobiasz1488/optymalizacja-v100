@@ -12,7 +12,8 @@ scripts/
   build-ubuntu.sh     budowanie na Ubuntu
   build-windows.ps1   budowanie na Windows 11 (build-windows.bat = to samo z dwukliku)
   run-server.sh/.ps1  llama-server z ustawieniami pod V100 32GB
-  bench.sh/.ps1       szybki benchmark (llama-bench)
+  bench.sh/.ps1       benchmark (llama-bench): KV f16 vs q8_0, krótki i długi kontekst
+  tune-gpu.sh/.ps1    maks. zegary aplikacyjne, limit mocy, persistence mode
   update-llama.sh     podmiana kopii llama.cpp na nowszy tag upstream
 models/               tu wrzucasz pliki .gguf (ignorowane przez git)
 ```
@@ -26,7 +27,23 @@ models/               tu wrzucasz pliki .gguf (ignorowane przez git)
 | `GGML_CUDA_GRAPHS` | `ON` | CUDA graphs zmniejszają narzut uruchamiania kerneli przy generowaniu tokenów. |
 | `GGML_CUDA_COMPRESSION_MODE` | `none` | Jedna architektura — kompresja fatbina nic nie daje, a spowalnia start. |
 | `GGML_NATIVE` | `ON` | Kod CPU zoptymalizowany pod procesor hosta (warstwy na CPU, sampling). |
-| Domyślne parametry uruchomienia | `-ngl 999 -fa on -ctk q8_0 -ctv q8_0 -c 32768 -b 2048 -ub 512` | Cały model na GPU, FlashAttention, KV cache w q8_0 (≈ połowa pamięci f16 przy minimalnej stracie jakości). |
+| Domyślne parametry uruchomienia | `-ngl 999 -fa on -ctk f16 -ctv f16 -c 32768 -b 2048 -ub 512` | Cały model na GPU, FlashAttention, KV cache w f16 — najszybszy wariant na Volcie (szczegóły niżej). |
+| Zegary GPU (`tune-gpu`) | maks. *application clocks* i limit mocy | GPU od razu pracuje na najwyższych zegarach zamiast startować z domyślnych; persistence mode usuwa 1–2 s inicjalizacji sterownika przy każdym starcie (Linux). |
+
+### KV cache na V100: f16 zamiast q8_0
+
+Z analizy `ggml/src/ggml-cuda/fattn.cu`: na Volcie przy generowaniu tokenów dla modeli z GQA
+(prawie wszystkie współczesne: Llama 3, Qwen, Gemma, Mistral) wybierany jest kernel `TILE`,
+który działa wyłącznie na danych f16. Kwantyzowany KV cache (q8_0/q4_0) jest więc przy
+**każdym tokenie i każdej warstwie w całości konwertowany do f16** (`fattn-common.cuh`), co
+przy długim kontekście kosztuje ok. 2–2,5× więcej transferu pamięci w attention niż f16.
+Na Turingu/Ampere tego problemu nie ma, dlatego popularna rada „zawsze q8_0” nie pasuje do V100.
+
+* **f16** — domyślnie, najszybciej.
+* **q8_0 / q4_0** — tylko gdy model + kontekst nie mieszczą się w 32 GB.
+
+Sprawdź na swoim modelu: `./scripts/bench.sh model.gguf` porównuje f16 i q8_0 przy pustym
+kontekście i przy 16k tokenów (`-d 16384`) — różnica rośnie z długością kontekstu.
 
 ### Wymagania wersji — ważne dla V100
 
@@ -47,6 +64,7 @@ source /etc/profile.d/cuda-v100.sh
 
 ./scripts/build-ubuntu.sh                 # binarki w build/bin
 nvidia-smi                                # sprawdź, czy V100 jest widoczna
+sudo ./scripts/tune-gpu.sh                # opcjonalnie: maks. zegary (do restartu)
 ```
 
 Uruchomienie:
@@ -55,7 +73,7 @@ Uruchomienie:
 ./scripts/run-server.sh models/Qwen3-32B-Q4_K_M.gguf
 # otwórz http://127.0.0.1:8080  (API zgodne z OpenAI: /v1/chat/completions)
 
-CTX=65536 KV=q4_0 HOST=0.0.0.0 ./scripts/run-server.sh models/model.gguf --parallel 2
+CTX=65536 KV=q8_0 HOST=0.0.0.0 ./scripts/run-server.sh models/model.gguf --parallel 2
 ./scripts/bench.sh models/model.gguf
 ```
 
@@ -80,16 +98,21 @@ CTX=65536 KV=q4_0 HOST=0.0.0.0 ./scripts/run-server.sh models/model.gguf --paral
 
    ```powershell
    .\scripts\run-server.ps1 -Model models\Qwen3-32B-Q4_K_M.gguf
-   .\scripts\run-server.ps1 -Model models\model.gguf -Ctx 65536 -Kv q4_0 -Extra "--parallel","2"
+   .\scripts\run-server.ps1 -Model models\model.gguf -Ctx 65536 -Kv q8_0 -Extra "--parallel","2"
    .\scripts\bench.ps1 models\model.gguf
    ```
+
+   Opcjonalnie, w PowerShell uruchomionym jako Administrator: `.\scripts\tune-gpu.ps1`.
+   Skrypt Windows uruchamia serwer z `-lm none` (bez mmap) — ładowanie przez mmap jest pod Windows
+   wolne i trzyma drugą kopię wag w RAM, mimo że wszystkie warstwy są na GPU.
 
 Uwaga: V100 pod Windows domyślnie działa w trybie **TCC** (karta obliczeniowa, bez wyjścia
 obrazu) — to dobry tryb dla llama.cpp. Sprawdzisz go w `nvidia-smi` (kolumna *TCC/WDDM*).
 
 ## Co zmieści się w 32 GB
 
-Orientacyjnie, z KV cache q8_0 i FlashAttention:
+Orientacyjnie, z FlashAttention. Kontekst podany dla KV q8_0 — z f16 (szybciej) zmieści się
+mniej więcej o połowę mniejszy:
 
 | Model | Kwantyzacja | Plik | Kontekst |
 |---|---|---|---|
@@ -103,8 +126,10 @@ Wskazówki dla Volty:
 
 * Wybieraj kwantyzacje `Q4_K_M`, `Q5_K_M`, `Q6_K`, `Q8_0` lub `F16`. Unikaj modeli/KV cache
   w **BF16** — V100 nie ma sprzętowego BF16 i jest to wyraźnie wolniejsze.
-* Brakuje pamięci → najpierw `KV=q4_0` / `-Kv q4_0`, potem mniejszy kontekst, dopiero potem
-  mniejsza kwantyzacja modelu.
+* Brakuje pamięci → najpierw `KV=q8_0` / `-Kv q8_0`, potem `q4_0`, potem mniejszy kontekst,
+  dopiero na końcu mniejsza kwantyzacja modelu.
+* Do przetestowania: `GGML_CUDA_GRAPH_OPT=1` (eksperymentalne w llama.cpp — równoległe
+  wykonywanie niezależnych gałęzi grafu na kilku strumieniach CUDA). Porównaj `bench.sh` z i bez.
 * `-ub 1024` może przyspieszyć przetwarzanie długich promptów kosztem ~1–2 GB VRAM — sprawdź
   `bench.sh` / `bench.ps1`.
 * Kilka V100 (np. NVLink w serwerach SXM2): model jest dzielony automatycznie;

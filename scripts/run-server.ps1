@@ -9,7 +9,7 @@
 param(
     [Parameter(Mandatory = $true)] [string] $Model,
     [int]      $Ctx    = 32768,
-    [string]   $Kv     = "q8_0",
+    [string]   $Kv     = "f16",   # q8_0/q4_0 only if out of VRAM - slower on Volta
     [int]      $Ubatch = 512,
     [string]   $HostName = "127.0.0.1",
     [int]      $Port   = 8080,
@@ -19,5 +19,7 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $exe  = Join-Path $Root "build\bin\llama-server.exe"
 
-& $exe -m $Model -ngl 999 -fa on -c $Ctx -ctk $Kv -ctv $Kv -b 2048 -ub $Ubatch `
+# -lm none (no mmap): on Windows loading through mmap is slow and keeps a second copy of
+# the weights in the page cache although every layer lives on the GPU.
+& $exe -m $Model -ngl 999 -fa on -c $Ctx -ctk $Kv -ctv $Kv -b 2048 -ub $Ubatch -lm none `
     --host $HostName --port $Port @Extra

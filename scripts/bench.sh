@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Quick V100 benchmark: prompt processing and generation, FlashAttention off/on.
-#   ./scripts/bench.sh models/model.gguf
+# V100 benchmark: prompt processing (pp) and generation (tg) at empty and long
+# context, f16 vs q8_0 KV cache, all with FlashAttention.
+#   ./scripts/bench.sh models/model.gguf [extra llama-bench args]
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODEL="${1:?usage: $0 <model.gguf>}"; shift
-exec "$ROOT/build/bin/llama-bench" -m "$MODEL" -ngl 999 -fa 0,1 -p 512,4096 -n 128 -ub 512 "$@"
+B="$ROOT/build/bin/llama-bench"
+for kv in f16 q8_0; do
+    "$B" -m "$MODEL" -ngl 999 -fa 1 -ctk "$kv" -ctv "$kv" -p 512 -n 128 -d 0,16384 -ub 512,1024 "$@"
+done
